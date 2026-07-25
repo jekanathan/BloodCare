@@ -1,0 +1,21 @@
+{
+  "name": "bloodcare-full-system",
+  "version": "1.0.0",
+  "description": "BloodCare — Full Blood Bank & Donor Management System",
+  "scripts": {
+    "install:all": "cd server && npm install && cd ../admin-panel && npm install && cd ../donor-portal && npm install && cd ../hospital-portal && npm install && cd ../bloodbank-portal && npm install && cd ../database-seed && npm install",
+    "seed": "cd database-seed && npm run seed",
+    "dev": "concurrently --names \"SERVER,ADMIN,DONOR,HOSPITAL,BLOODBANK\" --prefix-colors \"red,blue,green,cyan,magenta\" \"npm run dev:server\" \"npm run dev:admin\" \"npm run dev:donor\" \"npm run dev:hospital\" \"npm run dev:bloodbank\"",
+    "dev:server": "cd server && npm run dev",
+    "dev:admin": "cd admin-panel && npm start",
+    "dev:donor": "cd donor-portal && npm start",
+    "dev:hospital": "cd hospital-portal && npm start",
+    "dev:bloodbank": "cd bloodbank-portal && npm start"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1"
+  }
+}
