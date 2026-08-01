@@ -4,7 +4,45 @@ const auth = require('../middleware/auth');
 const BloodRequest = require('../models/BloodRequest');
 const Hospital = require('../models/Hospital');
 const BloodBag = require('../models/BloodBag');
+const Donor = require('../models/Donor');
 const logActivity = require('../utils/logActivity');
+const { districtDistanceKm } = require('../utils/districtDistance');
+
+// ─── POST /api/blood-requests/:id/respond ────────────────────────────────────
+// Donor portal: the logged-in donor accepts or declines a request that
+// matches their blood group. One response per donor per request — calling
+// this again overwrites their previous answer.
+router.post('/:id/respond', auth, async (req, res) => {
+  try {
+    const { response } = req.body;
+    if (!['accepted', 'declined'].includes(response)) {
+      return res.status(400).json({ message: 'response must be "accepted" or "declined"' });
+    }
+
+    const donor = await Donor.findOne({ user: req.user.id });
+    if (!donor) return res.status(404).json({ message: 'Donor profile not found' });
+
+    const request = await BloodRequest.findById(req.params.id);
+    if (!request) return res.status(404).json({ message: 'Request not found' });
+    if (request.bloodGroup !== donor.bloodGroup) {
+      return res.status(400).json({ message: 'This request does not match your blood group' });
+    }
+
+    const existing = request.donorResponses.find(dr => String(dr.donor) === String(donor._id));
+    if (existing) {
+      existing.response = response;
+      existing.respondedAt = new Date();
+    } else {
+      request.donorResponses.push({ donor: donor._id, response, respondedAt: new Date() });
+    }
+    await request.save();
+
+    res.json({ message: `Request ${response}`, myResponse: response });
+  } catch (err) {
+    console.error('Donor respond to request error:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
 
 // ─── GET /api/blood-requests/my ──────────────────────────────────────────────
 // Hospital portal: returns only this logged-in hospital's own requests.
@@ -12,6 +50,7 @@ router.get('/my', auth, async (req, res) => {
   try {
     const requests = await BloodRequest.find({ hospital: req.user.id })
       .populate('allocatedBags', 'bagId bloodGroup component status')
+      .populate('targetBloodBanks', 'bankName district')
       .sort({ createdAt: -1 });
 
     res.json({
@@ -31,6 +70,7 @@ router.get('/my', auth, async (req, res) => {
         receivedBy: r.receivedBy,
         requestedBy: r.requestedBy,
         notes: r.notes,
+        targetBloodBanks: (r.targetBloodBanks || []).map(b => ({ _id: b._id, bankName: b.bankName, district: b.district })),
         createdAt: r.createdAt,
         approvedAt: r.approvedAt,
         dispatchedAt: r.dispatchedAt,
@@ -131,10 +171,43 @@ router.get('/hospitals', auth, async (req, res) => {
   }
 });
 
+// ─── GET /api/blood-requests/nearby-blood-banks ─────────────────────────────
+// Hospital portal: approved blood banks ranked by real distance from the
+// logged-in hospital's own district, so the "New Blood Request" form can let
+// staff target the nearest banks first instead of blasting every bank.
+router.get('/nearby-blood-banks', auth, async (req, res) => {
+  try {
+    const hospital = await Hospital.findById(req.user.id).select('district hospitalName');
+    if (!hospital) return res.status(404).json({ message: 'Hospital not found' });
+
+    const banks = await BloodBank.find({ status: 'approved' }).select('bankName district phone');
+
+    const ranked = banks
+      .map(b => ({
+        _id: b._id,
+        bankName: b.bankName,
+        district: b.district,
+        phone: b.phone,
+        distanceKm: districtDistanceKm(hospital.district, b.district),
+        sameDistrict: b.district === hospital.district,
+      }))
+      .sort((a, b) => {
+        if (a.distanceKm === null) return 1;
+        if (b.distanceKm === null) return -1;
+        return a.distanceKm - b.distanceKm;
+      });
+
+    res.json({ hospitalDistrict: hospital.district, bloodBanks: ranked });
+  } catch (err) {
+    console.error('Get nearby blood banks error:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
 // ─── POST /api/blood-requests ────────────────────────────────────────────────
 router.post('/', auth, async (req, res) => {
   try {
-    const { hospitalId, patientId, patientName, patientAge, patientWard, bloodGroup, unitsRequired, priority, requestedBy, notes } = req.body;
+    const { hospitalId, patientId, patientName, patientAge, patientWard, bloodGroup, unitsRequired, priority, requestedBy, notes, targetBloodBanks } = req.body;
     const finalHospitalId = hospitalId || req.user.id; // hospital portal: self-submits, no dropdown needed
 
     if (!finalHospitalId || !bloodGroup || !unitsRequired) {
@@ -148,6 +221,7 @@ router.post('/', auth, async (req, res) => {
       bloodGroup, unitsRequired: parseInt(unitsRequired),
       priority: priority || 'Normal',
       requestedBy, notes,
+      targetBloodBanks: Array.isArray(targetBloodBanks) ? targetBloodBanks : [],
     });
     await request.save();
 

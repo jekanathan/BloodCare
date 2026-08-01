@@ -10,6 +10,7 @@ const Notification = require('../models/Notification');
 const Appointment = require('../models/Appointment');
 const Campaign = require('../models/Campaign');
 const auth = require('../middleware/auth');
+const { districtDistanceKm } = require('../utils/districtDistance');
 
 const BADGE_TIERS = [
   { min: 100, name: 'Legend' },
@@ -159,6 +160,34 @@ router.get('/me', auth, async (req, res) => {
   }
 });
 
+// ─── PUT /api/donor/profile ───────────────────────────────────────────────
+// Lets the logged-in donor update their own editable profile fields.
+router.put('/profile', auth, async (req, res) => {
+  try {
+    const donor = await Donor.findOne({ user: req.user.id });
+    if (!donor) return res.status(404).json({ message: 'Donor profile not found' });
+
+    const EDITABLE_FIELDS = [
+      'fullName', 'nic', 'dateOfBirth', 'gender', 'bloodGroup',
+      'phone', 'email', 'address', 'district', 'medicalInfo',
+    ];
+
+    EDITABLE_FIELDS.forEach((field) => {
+      if (req.body[field] !== undefined) donor[field] = req.body[field];
+    });
+
+    await donor.save();
+    res.json(donor);
+  } catch (err) {
+    console.error('Donor profile update error:', err);
+    if (err.code === 11000) {
+      const field = Object.keys(err.keyPattern || {})[0] || 'field';
+      return res.status(400).json({ message: `This ${field} is already in use.` });
+    }
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
 // ─── GET /api/donor/dashboard ─────────────────────────────────────────────
 // Aggregates everything the donor dashboard needs in one call — all figures
 // are computed live from the database (no hardcoded/mock values).
@@ -279,6 +308,61 @@ router.get('/dashboard', auth, async (req, res) => {
     });
   } catch (err) {
     console.error('Donor dashboard error:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+// ─── GET /api/donor/requests ───────────────────────────────────────────────
+// All open blood requests matching the donor's blood group (not capped at 5
+// like the dashboard summary), including this donor's own accept/decline
+// response if they've already responded.
+router.get('/requests', auth, async (req, res) => {
+  try {
+    const donor = await Donor.findOne({ user: req.user.id });
+    if (!donor) return res.status(404).json({ message: 'Donor profile not found' });
+
+    const requests = await BloodRequest.find({
+      bloodGroup: donor.bloodGroup,
+      status: { $in: ['pending', 'approved', 'processing'] },
+    })
+      .populate('hospital', 'hospitalName district');
+
+    const withDistance = requests.map(r => {
+      const myResponse = r.donorResponses.find(dr => String(dr.donor) === String(donor._id));
+      return {
+        _id: r._id,
+        hospital: {
+          hospitalName: r.hospital?.hospitalName || 'Hospital',
+          district: r.hospital?.district || '',
+        },
+        bloodGroup: r.bloodGroup,
+        unitsRequired: r.unitsRequired,
+        priority: r.priority,
+        patientAge: r.patientAge,
+        patientCondition: r.patientCondition || null,
+        createdAt: r.createdAt,
+        myResponse: myResponse ? myResponse.response : null,
+        distanceKm: districtDistanceKm(donor.district, r.hospital?.district),
+      };
+    });
+
+    // Nearest first within the same priority tier — closer requests are
+    // usually the ones a donor can realistically respond to.
+    const PRIORITY_RANK = { Emergency: 0, Urgent: 1, Normal: 2 };
+    withDistance.sort((a, b) => {
+      const pr = (PRIORITY_RANK[a.priority] ?? 3) - (PRIORITY_RANK[b.priority] ?? 3);
+      if (pr !== 0) return pr;
+      if (a.distanceKm === null) return 1;
+      if (b.distanceKm === null) return -1;
+      return a.distanceKm - b.distanceKm;
+    });
+
+    res.json({
+      bloodGroup: donor.bloodGroup,
+      requests: withDistance,
+    });
+  } catch (err) {
+    console.error('Get donor requests error:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });

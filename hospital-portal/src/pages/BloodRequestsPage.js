@@ -51,6 +51,9 @@ export default function BloodRequestsPage(){
   const [saving,setSaving]=useState(false);
   const [error,setError]=useState('');
   const [toast,setToast]=useState('');
+  const [nearbyBanks,setNearbyBanks]=useState([]);
+  const [nearbyLoading,setNearbyLoading]=useState(false);
+  const [selectedBanks,setSelectedBanks]=useState([]);
 
   const showToast=msg=>{setToast(msg);setTimeout(()=>setToast(''),3000)};
 
@@ -76,6 +79,20 @@ export default function BloodRequestsPage(){
     window.addEventListener('open-new-blood-request',handler);
     return ()=>window.removeEventListener('open-new-blood-request',handler);
   },[]);
+
+  useEffect(()=>{
+    if(!showNew) return;
+    setSelectedBanks([]);
+    setNearbyLoading(true);
+    api.get('/blood-requests/nearby-blood-banks')
+      .then(res=>setNearbyBanks(res.data?.bloodBanks||[]))
+      .catch(()=>setNearbyBanks([]))
+      .finally(()=>setNearbyLoading(false));
+  },[showNew]);
+
+  const toggleBank=(id)=>{
+    setSelectedBanks(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);
+  };
 
   const TAB_FILTERS={
     all:        r=>true,
@@ -120,8 +137,8 @@ export default function BloodRequestsPage(){
     e.preventDefault();
     setError('');setSaving(true);
     try{
-      await api.post('/blood-requests',form);
-      setShowNew(false);setForm(EMPTY);
+      await api.post('/blood-requests',{...form,targetBloodBanks:selectedBanks});
+      setShowNew(false);setForm(EMPTY);setSelectedBanks([]);
       showToast('Blood request submitted successfully!');
       fetchAll();
     }catch(err){setError(err.response?.data?.message||'Failed to submit request');}
@@ -284,6 +301,11 @@ export default function BloodRequestsPage(){
                   <strong>Notes:</strong> {selected.notes}
                 </div>
               )}
+              {selected.targetBloodBanks?.length>0&&(
+                <div style={{background:'var(--slate-50)',borderRadius:'var(--r-sm)',padding:'12px 14px',fontSize:13,color:'var(--slate-600)',marginTop:12}}>
+                  <strong>Sent To:</strong> {selected.targetBloodBanks.map(b=>b.bankName).join(', ')}
+                </div>
+              )}
             </div>
             <div className="modal-footer">
               {selected.status==='dispatched'&&<button className="btn-primary" onClick={()=>confirmReceived(selected._id)}><CheckCircle size={14}/> Confirm Received</button>}
@@ -338,6 +360,27 @@ export default function BloodRequestsPage(){
                 </div>
                 <div className="form-group"><label className="form-label">Requested By (doctor)</label><input className="form-input" value={form.requestedBy} onChange={e=>set('requestedBy',e.target.value)}/></div>
                 <div className="form-group"><label className="form-label">Notes (optional)</label><input className="form-input" placeholder="Additional information..." value={form.notes} onChange={e=>set('notes',e.target.value)}/></div>
+
+                <div className="form-group">
+                  <label className="form-label">Send To Blood Banks (nearest first, optional)</label>
+                  <div style={{fontSize:12,color:'var(--slate-500)',marginBottom:8}}>
+                    {selectedBanks.length===0?'Leave unselected to keep this request open to all blood banks.':`${selectedBanks.length} bank${selectedBanks.length>1?'s':''} selected.`}
+                  </div>
+                  <div style={{maxHeight:180,overflowY:'auto',border:'1px solid var(--slate-200)',borderRadius:'var(--r-sm)'}}>
+                    {nearbyLoading&&<div style={{padding:14,fontSize:13,color:'var(--slate-500)'}}>Finding nearby blood banks…</div>}
+                    {!nearbyLoading&&nearbyBanks.length===0&&<div style={{padding:14,fontSize:13,color:'var(--slate-500)'}}>No approved blood banks found.</div>}
+                    {!nearbyLoading&&nearbyBanks.map(b=>(
+                      <label key={b._id} style={{display:'flex',alignItems:'center',gap:10,padding:'9px 12px',borderBottom:'1px solid var(--slate-100)',cursor:'pointer',fontSize:13}}>
+                        <input type="checkbox" checked={selectedBanks.includes(b._id)} onChange={()=>toggleBank(b._id)}/>
+                        <span style={{flex:1,fontWeight:600}}>{b.bankName}</span>
+                        <span style={{color:'var(--slate-400)'}}>{b.district||'—'}</span>
+                        <span style={{fontSize:11,fontWeight:700,padding:'2px 8px',borderRadius:100,background:b.sameDistrict?'var(--green-100)':'var(--slate-100)',color:b.sameDistrict?'var(--green-600)':'var(--slate-500)'}}>
+                          {b.distanceKm===null?'—':b.distanceKm===0?'Same district':`${b.distanceKm} km`}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn-secondary" onClick={()=>setShowNew(false)}>Cancel</button>

@@ -4,9 +4,16 @@ const bloodRequestSchema = new mongoose.Schema({
   hospital: { type: mongoose.Schema.Types.ObjectId, ref: 'Hospital', required: true },
   patient: { type: mongoose.Schema.Types.ObjectId, ref: 'Patient' }, // optional link to registered patient record
   bloodBank: { type: mongoose.Schema.Types.ObjectId, ref: 'BloodBank' },
+
+  // Blood banks the hospital chose to send this request to, picked from a
+  // distance-sorted list (nearest first) when the request was created. Empty
+  // means the hospital didn't target specific banks — open to all.
+  targetBloodBanks: [{ type: mongoose.Schema.Types.ObjectId, ref: 'BloodBank' }],
+
   patientName: { type: String },
   patientAge: { type: Number },
   patientWard: { type: String },
+  patientCondition: { type: String }, // e.g. "Surgery", "Accident" — optional, set by hospital
   bloodGroup: { 
     type: String, 
     enum: ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'],
@@ -63,6 +70,15 @@ const bloodRequestSchema = new mongoose.Schema({
   cancelledAt: { type: Date },
   cancelledBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   cancellationReason: { type: String },
+
+  // ── Donor Responses ──────────────────────────────────────────────────────
+  // Tracks which donors (matching this request's blood group) accepted or
+  // declined to donate for it, so the donor portal can show real state.
+  donorResponses: [{
+    donor: { type: mongoose.Schema.Types.ObjectId, ref: 'Donor', required: true },
+    response: { type: String, enum: ['accepted', 'declined'], required: true },
+    respondedAt: { type: Date, default: Date.now },
+  }],
 
   requestedBy: { type: String }, // doctor name, free text
   notes: { type: String },
