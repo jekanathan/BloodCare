@@ -4,3 +4,4 @@ build/
 dist/
 *.log
 server/uploads/
+admin-panel/public/sasika.jpeg
