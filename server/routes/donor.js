@@ -8,6 +8,7 @@ const BloodBag = require('../models/BloodBag');
 const BloodRequest = require('../models/BloodRequest');
 const Notification = require('../models/Notification');
 const Appointment = require('../models/Appointment');
+const Campaign = require('../models/Campaign');
 const auth = require('../middleware/auth');
 
 const BADGE_TIERS = [
@@ -210,6 +211,25 @@ router.get('/dashboard', auth, async (req, res) => {
       ? Math.max(0, Math.ceil((nextEligibleDate.getTime() - Date.now()) / 86400000))
       : 0;
 
+    // Points are a transparent function of real activity — not a stored
+    // fake number: 50 per completed donation, +10 while currently eligible.
+    const donorPoints = (donor.totalDonations || 0) * 50 + (donor.isEligible ? 10 : 0);
+
+    // Last-12-months donation counts, built from real BloodBag history.
+    const now = new Date();
+    const chartData = [];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const monthLabel = d.toLocaleString('en', { month: 'short' });
+      const count = history.filter(h => {
+        const hd = new Date(h.collectionDate);
+        return hd.getFullYear() === d.getFullYear() && hd.getMonth() === d.getMonth();
+      }).length;
+      chartData.push({ month: monthLabel, count });
+    }
+
+    const topEmergencyRequest = activeRequests.find(r => r.priority === 'Emergency') || activeRequests[0] || null;
+
     res.json({
       donor: {
         fullName: donor.fullName,
@@ -219,10 +239,13 @@ router.get('/dashboard', auth, async (req, res) => {
         totalDonations: donor.totalDonations,
         lastDonationDate: lastDonation,
         daysUntilEligible,
+        nextEligibleDate,
         badge: badgeForCount(donor.totalDonations || 0),
         livesImpacted: (donor.totalDonations || 0) * 3,
         monthsSinceLast,
+        points: donorPoints,
       },
+      chartData,
       history: history.map(h => ({
         _id: h._id,
         date: h.collectionDate,
@@ -252,9 +275,187 @@ router.get('/dashboard', auth, async (req, res) => {
         date: nextAppointment.date,
         time: nextAppointment.time,
       } : null,
+      topEmergencyRequest,
     });
   } catch (err) {
     console.error('Donor dashboard error:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+// ─── GET /api/donor/donations ───────────────────────────────────────────────
+// Full donation history (not capped at 10 like the dashboard summary),
+// with real bag/testing details for the history page's expanded view.
+router.get('/donations', auth, async (req, res) => {
+  try {
+    const donor = await Donor.findOne({ user: req.user.id });
+    if (!donor) return res.status(404).json({ message: 'Donor profile not found' });
+
+    const bags = await BloodBag.find({ donor: donor._id })
+      .sort({ collectionDate: -1 })
+      .populate('bloodBank', 'bankName address');
+
+    const totalMl = bags.reduce((s, b) => s + (b.quantityMl || 0), 0);
+
+    res.json({
+      donations: bags.map(b => ({
+        _id: b._id,
+        bagId: b.bagId,
+        date: b.collectionDate,
+        location: b.bloodBank?.bankName || 'BloodCare Facility',
+        address: b.bloodBank?.address || '',
+        bloodGroup: b.bloodGroup,
+        component: b.component,
+        units: b.quantityMl,
+        status: b.status,
+        testResults: b.testResults,
+        testedAt: b.testedAt || null,
+        expiryDate: b.expiryDate,
+      })),
+      summary: {
+        totalDonations: bags.length,
+        totalMl,
+        livesImpacted: bags.length * 3,
+        badge: badgeForCount(bags.length),
+      },
+    });
+  } catch (err) {
+    console.error('Donor donations error:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+// ─── GET /api/donor/notifications-feed ──────────────────────────────────────
+// Unified, real-data notification feed for the donor: broadcast
+// announcements (persisted read/unread), plus live blood-request,
+// appointment and campaign activity relevant to this donor.
+router.get('/notifications-feed', auth, async (req, res) => {
+  try {
+    const donor = await Donor.findOne({ user: req.user.id });
+    if (!donor) return res.status(404).json({ message: 'Donor profile not found' });
+
+    const [announcements, requests, appointments, campaigns] = await Promise.all([
+      Notification.find({
+        status: 'sent',
+        recipientGroup: {
+          $in: ['All Donors', `${donor.bloodGroup} Donors`, ...(donor.isEligible ? ['Eligible Donors'] : [])],
+        },
+      }).sort({ sentAt: -1 }).limit(20),
+
+      BloodRequest.find({
+        bloodGroup: donor.bloodGroup,
+        status: { $in: ['pending', 'approved', 'processing'] },
+      }).sort({ createdAt: -1 }).limit(10).populate('hospital', 'hospitalName'),
+
+      Appointment.find({ donor: donor._id }).sort({ updatedAt: -1 }).limit(10)
+        .populate('bloodBank', 'bankName'),
+
+      Campaign.find({
+        status: { $in: ['upcoming', 'active'] },
+        $or: [
+          { targetBloodGroups: 'All' },
+          { targetBloodGroups: donor.bloodGroup },
+          { district: donor.district },
+        ],
+      }).sort({ startDate: 1 }).limit(10),
+    ]);
+
+    const items = [
+      ...announcements.map(n => ({
+        _id: n._id,
+        source: 'notification',
+        type: 'system',
+        category: 'system',
+        icon: n.type === 'Announcement' ? '📣' : n.type === 'SMS' ? '💬' : n.type === 'Email' ? '✉️' : '🔔',
+        title: n.title,
+        desc: n.message,
+        time: n.sentAt,
+        unread: !n.readBy?.some(id => id.toString() === req.user.id),
+      })),
+      ...requests.map(r => ({
+        _id: r._id,
+        source: 'request',
+        type: r.priority === 'Emergency' ? 'emergency' : 'hospital',
+        category: 'requests',
+        icon: r.priority === 'Emergency' ? '🚨' : '🏥',
+        title: r.priority === 'Emergency' ? 'Emergency Blood Request' : 'Hospital Blood Request',
+        desc: `${r.hospital?.hospitalName || 'A hospital'} needs ${r.bloodGroup} blood. ${r.unitsRequired} unit${r.unitsRequired !== 1 ? 's' : ''} required.`,
+        time: r.createdAt,
+        unread: false, // derived, not a persisted-read item
+      })),
+      ...appointments.map(a => ({
+        _id: a._id,
+        source: 'appointment',
+        type: 'appointment',
+        category: 'appointments',
+        icon: a.status === 'cancelled' ? '❌' : '📅',
+        title: a.status === 'cancelled' ? 'Appointment Cancelled' : 'Appointment Reminder',
+        desc: a.status === 'cancelled'
+          ? `Your appointment at ${a.bloodBank?.bankName || 'the blood bank'} was cancelled.`
+          : `You have a donation appointment on ${new Date(a.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} at ${a.time}, ${a.bloodBank?.bankName || 'the blood bank'}.`,
+        time: a.updatedAt,
+        unread: false,
+      })),
+      ...campaigns.map(c => ({
+        _id: c._id,
+        source: 'campaign',
+        type: 'campaign',
+        category: 'campaigns',
+        icon: '📢',
+        title: 'New Donation Campaign',
+        desc: `${c.title} — ${c.venue || c.district || ''}, ${new Date(c.startDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}${c.time ? ` (${c.time})` : ''}. Register now!`,
+        time: c.createdAt,
+        unread: false,
+      })),
+    ].sort((a, b) => new Date(b.time) - new Date(a.time));
+
+    res.json({ items });
+  } catch (err) {
+    console.error('Donor notifications feed error:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+// ─── PATCH /api/donor/notifications-feed/:id/read ───────────────────────────
+router.patch('/notifications-feed/:id/read', auth, async (req, res) => {
+  try {
+    const notif = await Notification.findById(req.params.id);
+    if (!notif) return res.status(404).json({ message: 'Notification not found' });
+
+    const alreadyRead = notif.readBy?.some(id => id.toString() === req.user.id);
+    if (!alreadyRead) {
+      notif.readBy.push(req.user.id);
+      notif.openedCount = (notif.openedCount || 0) + 1;
+      await notif.save();
+    }
+    res.json({ message: 'Marked as read' });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+// ─── PATCH /api/donor/notifications-feed/mark-all-read ──────────────────────
+router.patch('/notifications-feed/mark-all-read', auth, async (req, res) => {
+  try {
+    const donor = await Donor.findOne({ user: req.user.id });
+    if (!donor) return res.status(404).json({ message: 'Donor profile not found' });
+
+    const notifs = await Notification.find({
+      status: 'sent',
+      recipientGroup: {
+        $in: ['All Donors', `${donor.bloodGroup} Donors`, ...(donor.isEligible ? ['Eligible Donors'] : [])],
+      },
+      readBy: { $ne: req.user.id },
+    });
+
+    await Promise.all(notifs.map(n => {
+      n.readBy.push(req.user.id);
+      n.openedCount = (n.openedCount || 0) + 1;
+      return n.save();
+    }));
+
+    res.json({ message: 'All marked as read' });
+  } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
@@ -305,6 +506,33 @@ router.post('/book-testing', auth, async (req, res) => {
     res.json({ message: 'Testing appointment booked successfully', donor });
   } catch (err) {
     console.error('Book testing error:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+// ─── PATCH /api/donor/change-password ───────────────────────────────────────
+router.patch('/change-password', auth, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: 'Current and new password are required' });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'New password must be at least 6 characters' });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const isMatch = await user.comparePassword(currentPassword);
+    if (!isMatch) return res.status(400).json({ message: 'Current password is incorrect' });
+
+    user.password = newPassword; // pre-save hook re-hashes
+    await user.save();
+
+    res.json({ message: 'Password updated successfully' });
+  } catch (err) {
+    console.error('Change password error:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });

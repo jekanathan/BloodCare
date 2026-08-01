@@ -1,34 +1,88 @@
-import React, { useState } from 'react';
-import { Bell, CheckCheck } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Bell, CheckCheck, AlertTriangle } from 'lucide-react';
+import api from '../utils/api';
 
-const ALL_NOTIFICATIONS = [
-  { _id: '1', type: 'emergency', icon: '🚨', title: 'Emergency Blood Request', desc: 'National Hospital Colombo needs O+ blood urgently. 2 units required for a critical patient.', time: '5 minutes ago', unread: true, category: 'requests' },
-  { _id: '2', type: 'hospital',  icon: '🏥', title: 'Hospital Blood Request', desc: 'City Blood Bank requests O+ blood donors. Please respond if available.', time: '2 hours ago',   unread: true, category: 'requests' },
-  { _id: '3', type: 'campaign',  icon: '📢', title: 'New Donation Campaign', desc: 'Monthly Blood Donation Camp at National Blood Bank — Feb 15 & 16. Register now!', time: '1 day ago', unread: true, category: 'campaigns' },
-  { _id: '4', type: 'system',    icon: '✅', title: 'Donation Confirmed', desc: 'Your blood donation on Jan 12 has been successfully processed. Thank you for saving lives!', time: '2 days ago', unread: false, category: 'system' },
-  { _id: '5', type: 'appointment',icon: '📅', title: 'Appointment Reminder', desc: 'Reminder: You have a blood donation appointment on Feb 15 at 10:00 AM at National Blood Bank.', time: '3 days ago', unread: false, category: 'appointments' },
-  { _id: '6', type: 'system',    icon: '🏅', title: 'New Badge Earned!', desc: 'Congratulations! You have earned the "Star Donor" badge for completing 5 donations.', time: '5 days ago', unread: false, category: 'system' },
-  { _id: '7', type: 'emergency', icon: '🚨', title: 'Critical: AB- Blood Needed', desc: 'Kandy Teaching Hospital urgently needs AB- blood. Only 3 units available island-wide.', time: '1 week ago', unread: false, category: 'requests' },
-  { _id: '8', type: 'system',    icon: '✅', title: 'Profile Approved', desc: 'Your donor profile has been approved by the admin. You are now an active BloodCare donor!', time: '2 weeks ago', unread: false, category: 'system' },
+const TABS = [
+  { key: 'all',          label: 'All' },
+  { key: 'requests',     label: 'Requests' },
+  { key: 'campaigns',    label: 'Campaigns' },
+  { key: 'appointments', label: 'Appointments' },
+  { key: 'system',       label: 'System' },
 ];
 
+function timeAgo(dateStr) {
+  if (!dateStr) return '';
+  const diffMs = Date.now() - new Date(dateStr).getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return 'Just now';
+  if (diffMin < 60) return `${diffMin} min${diffMin > 1 ? 's' : ''} ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr} hour${diffHr > 1 ? 's' : ''} ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay < 7) return `${diffDay} day${diffDay > 1 ? 's' : ''} ago`;
+  const diffWk = Math.floor(diffDay / 7);
+  if (diffWk < 5) return `${diffWk} week${diffWk > 1 ? 's' : ''} ago`;
+  return new Date(dateStr).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
 export default function NotificationsPage() {
-  const [notifications, setNotifications] = useState(ALL_NOTIFICATIONS);
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [tab, setTab] = useState('all');
 
-  const tabs = [
-    { key: 'all',          label: 'All' },
-    { key: 'requests',     label: 'Requests' },
-    { key: 'campaigns',    label: 'Campaigns' },
-    { key: 'appointments', label: 'Appointments' },
-    { key: 'system',       label: 'System' },
-  ];
+  const load = () => {
+    setLoading(true);
+    api.get('/donor/notifications-feed')
+      .then(res => { setItems(res.data?.items || []); setError(null); })
+      .catch(err => setError(err.response?.data?.message || 'Could not load notifications'))
+      .finally(() => setLoading(false));
+  };
 
-  const displayed = tab === 'all' ? notifications : notifications.filter(n => n.category === tab);
-  const unreadCount = notifications.filter(n => n.unread).length;
+  useEffect(() => { load(); }, []);
 
-  const markAll = () => setNotifications(prev => prev.map(n => ({ ...n, unread: false })));
-  const markOne = (id) => setNotifications(prev => prev.map(n => n._id === id ? { ...n, unread: false } : n));
+  const displayed = tab === 'all' ? items : items.filter(n => n.category === tab);
+  const unreadCount = items.filter(n => n.unread).length;
+
+  const markOne = async (n) => {
+    if (!n.unread || n.source !== 'notification') return;
+    setItems(prev => prev.map(x => x._id === n._id ? { ...x, unread: false } : x));
+    try {
+      await api.patch(`/donor/notifications-feed/${n._id}/read`);
+    } catch {
+      // revert on failure
+      setItems(prev => prev.map(x => x._id === n._id ? { ...x, unread: true } : x));
+    }
+  };
+
+  const markAll = async () => {
+    setItems(prev => prev.map(n => ({ ...n, unread: false })));
+    try {
+      await api.patch('/donor/notifications-feed/mark-all-read');
+    } catch {
+      load(); // reload real state on failure
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="anim-up" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 300, color: 'var(--slate-500)' }}>
+        <div style={{ width: 34, height: 34, border: '3px solid var(--slate-200)', borderTopColor: 'var(--red-600)', borderRadius: '50%', animation: 'spin 0.8s linear infinite', marginBottom: 14 }} />
+        Loading notifications…
+        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="anim-up card" style={{ padding: 32, textAlign: 'center' }}>
+        <AlertTriangle size={28} color="var(--amber-500)" style={{ marginBottom: 10 }} />
+        <div style={{ fontWeight: 700, marginBottom: 6 }}>Couldn't load notifications</div>
+        <div style={{ fontSize: 13, color: 'var(--slate-500)' }}>{error}</div>
+      </div>
+    );
+  }
 
   return (
     <div className="anim-up">
@@ -49,8 +103,8 @@ export default function NotificationsPage() {
 
       {/* Tabs */}
       <div className="notif-tabs" style={{ marginBottom: 20 }}>
-        {tabs.map(({ key, label }) => {
-          const cnt = key === 'all' ? notifications.filter(n => n.unread).length : notifications.filter(n => n.category === key && n.unread).length;
+        {TABS.map(({ key, label }) => {
+          const cnt = key === 'all' ? items.filter(n => n.unread).length : items.filter(n => n.category === key && n.unread).length;
           return (
             <button key={key} className={`notif-tab ${tab === key ? 'active' : ''}`} onClick={() => setTab(key)}>
               {label}
@@ -71,12 +125,12 @@ export default function NotificationsPage() {
           </div>
         ) : (
           displayed.map(n => (
-            <div key={n._id} className={`notif-item ${n.unread ? 'unread' : ''}`} onClick={() => markOne(n._id)}>
+            <div key={n._id} className={`notif-item ${n.unread ? 'unread' : ''}`} onClick={() => markOne(n)}>
               <div className={`notif-icon-wrap ${n.type}`}>{n.icon}</div>
               <div className="notif-content">
                 <div className="notif-title">{n.title}</div>
                 <div className="notif-desc">{n.desc}</div>
-                <div className="notif-time">{n.time}</div>
+                <div className="notif-time">{timeAgo(n.time)}</div>
               </div>
               {n.unread && <div className="notif-badge">NEW</div>}
             </div>

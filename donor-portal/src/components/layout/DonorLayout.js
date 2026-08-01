@@ -2,39 +2,54 @@ import React, { useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import {
-  LayoutDashboard, User, Clock, Bell, FileText,
-  Calendar, LogOut, Droplet, Menu, X
+  LayoutDashboard, User, Clock, Bell, FileText, Award, BadgeCheck,
+  Calendar, LogOut, Droplet, Menu, X, MapPin, Settings, HelpCircle, Heart
 } from 'lucide-react';
 
 const TITLES = {
   '/':              'Dashboard',
-  '/requests':      'Blood Requests',
+  '/requests':      'Emergency Requests',
   '/history':       'Donation History',
   '/appointments':  'Appointments',
   '/notifications': 'Notifications',
   '/profile':       'My Profile',
+  '/rewards':       'Rewards & Badges',
+  '/certificates':  'My Certificates',
+  '/blood-banks':   'Find Blood Banks',
+  '/settings':      'Settings',
+  '/help':          'Help & Support',
 };
 
 const NAV = [
   {
     section: 'Overview',
     items: [
-      { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
+      { path: '/',             icon: LayoutDashboard, label: 'Dashboard' },
+      { path: '/profile',      icon: User,             label: 'My Profile' },
     ],
   },
   {
     section: 'Donation',
     items: [
-      { path: '/requests',      icon: FileText, label: 'Blood Requests' },
-      { path: '/history',       icon: Clock,    label: 'Donation History' },
-      { path: '/appointments',  icon: Calendar, label: 'Appointments' },
+      { path: '/appointments', icon: Calendar,  label: 'Donate Blood' },
+      { path: '/history',      icon: Clock,     label: 'Donation History' },
+      { path: '/requests',     icon: FileText,  label: 'Emergency Requests' },
     ],
   },
   {
-    section: 'Account',
+    section: 'Rewards',
     items: [
-      { path: '/notifications', icon: Bell, label: 'Notifications' },
-      { path: '/profile',       icon: User, label: 'My Profile' },
+      { path: '/rewards',      icon: Award,      label: 'Rewards & Badges' },
+      { path: '/notifications',icon: Bell,       label: 'Notifications', notifKey: true },
+      { path: '/certificates', icon: BadgeCheck, label: 'My Certificates' },
+    ],
+  },
+  {
+    section: 'More',
+    items: [
+      { path: '/blood-banks',  icon: MapPin,      label: 'Find Blood Banks' },
+      { path: '/settings',     icon: Settings,    label: 'Settings' },
+      { path: '/help',         icon: HelpCircle,  label: 'Help & Support' },
     ],
   },
 ];
@@ -58,7 +73,7 @@ export default function DonorLayout() {
 
   return (
     <div className="app-layout">
-      <aside className={`sidebar ${mobileOpen ? 'mobile-open' : ''}`}>
+      <aside className={`sidebar ${mobileOpen ? 'mobile-open' : ''}`} style={{ display: 'flex', flexDirection: 'column' }}>
         <div className="sidebar-logo" onClick={() => { navigate('/'); setMobileOpen(false); }}>
           <div className="sidebar-logo-icon"><Droplet size={18} color="#fff" /></div>
           <div>
@@ -67,19 +82,19 @@ export default function DonorLayout() {
           </div>
         </div>
 
-        <nav className="sidebar-nav">
+        <nav className="sidebar-nav" style={{ flex: 1 }}>
           {NAV.map(({ section, items }) => (
             <div className="sidebar-section" key={section}>
               <div className="sidebar-section-title">{section}</div>
-              {items.map(({ path, icon: Icon, label }) => (
+              {items.map(({ path, icon: Icon, label, notifKey }) => (
                 <button
-                  key={path}
+                  key={label}
                   className={`sidebar-link ${isActive(path) ? 'active' : ''}`}
                   onClick={() => { navigate(path); setMobileOpen(false); }}
                 >
                   <Icon size={15} />
                   <span style={{ flex: 1, textAlign: 'left' }}>{label}</span>
-                  {path === '/notifications' && unreadCount > 0 && (
+                  {notifKey && unreadCount > 0 && (
                     <span className="sidebar-link-badge">{unreadCount}</span>
                   )}
                 </button>
@@ -87,6 +102,12 @@ export default function DonorLayout() {
             </div>
           ))}
         </nav>
+
+        <div className="sidebar-footer-card">
+          <Heart size={22} color="#FCA5A5" fill="#FCA5A5" />
+          <div className="sidebar-footer-card-title">Every Drop Counts</div>
+          <div className="sidebar-footer-card-sub">Thank you for being a life saver.</div>
+        </div>
 
         <div className="sidebar-footer">
           <div className="sidebar-user" onClick={() => navigate('/profile')}>
@@ -105,15 +126,14 @@ export default function DonorLayout() {
       <div className="main-content">
         <header className="header">
           <div className="header-left">
-            <button
-              className="header-btn mobile-menu-btn"
-              onClick={() => setMobileOpen(o => !o)}
-            >
+            <button className="header-btn mobile-menu-btn" onClick={() => setMobileOpen(o => !o)}>
               {mobileOpen ? <X size={16} /> : <Menu size={16} />}
             </button>
             <div>
               <div className="header-title">{pageTitle}</div>
-              <div className="header-subtitle">BloodCare Donor Portal</div>
+              <div className="header-subtitle">
+                {location.pathname === '/' ? `Welcome back, ${donor?.fullName || 'Donor'} 👋` : 'BloodCare Donor Portal'}
+              </div>
             </div>
           </div>
 
@@ -124,6 +144,9 @@ export default function DonorLayout() {
                 <span style={{ position: 'absolute', top: -5, right: -5, background: 'var(--red-600)', color: '#fff', fontSize: 9, fontWeight: 700, width: 16, height: 16, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{unreadCount}</span>
               )}
             </button>
+            <button className="header-btn" onClick={() => navigate('/appointments')}>
+              <Calendar size={16} />
+            </button>
             <div
               style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: 'var(--slate-50)', borderRadius: 'var(--r-sm)', border: '1px solid var(--slate-200)', cursor: 'pointer' }}
               onClick={() => navigate('/profile')}
@@ -133,7 +156,7 @@ export default function DonorLayout() {
               </div>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--slate-900)' }}>{donor?.fullName || 'Donor'}</div>
-                <div style={{ fontSize: 10, color: 'var(--slate-500)' }}>{donor?.bloodGroup ? `${donor.bloodGroup} Donor` : 'Donor'}</div>
+                <div style={{ fontSize: 10, color: 'var(--slate-500)' }}>Donor</div>
               </div>
             </div>
           </div>

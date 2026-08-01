@@ -10,6 +10,11 @@ import DonationHistoryPage from './pages/DonationHistoryPage';
 import NotificationsPage from './pages/NotificationsPage';
 import RequestsPage from './pages/RequestsPage';
 import AppointmentsPage from './pages/AppointmentsPage';
+import FindBloodBanksPage from './pages/FindBloodBanksPage';
+import CertificatesPage from './pages/CertificatesPage';
+import RewardsPage from './pages/RewardsPage';
+import SettingsPage from './pages/SettingsPage';
+import HelpSupportPage from './pages/HelpSupportPage';
 import TestingBookingPage from './pages/TestingBookingPage';
 import TestingWaitingPage from './pages/TestingWaitingPage';
 import TestingRejectedPage from './pages/TestingRejectedPage';
@@ -57,6 +62,11 @@ function App() {
             <Route path="notifications" element={<NotificationsPage />} />
             <Route path="requests"      element={<RequestsPage />} />
             <Route path="appointments"  element={<AppointmentsPage />} />
+            <Route path="blood-banks"   element={<FindBloodBanksPage />} />
+            <Route path="certificates"  element={<CertificatesPage />} />
+            <Route path="rewards"       element={<RewardsPage />} />
+            <Route path="settings"      element={<SettingsPage />} />
+            <Route path="help"          element={<HelpSupportPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

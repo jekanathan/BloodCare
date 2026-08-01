@@ -54,6 +54,20 @@ router.get('/', auth, async (req, res) => {
   }
 });
 
+// ─── GET /api/donor-certificates/my ─────────────────────────────────────────
+// Certificates belonging to the logged-in donor only.
+router.get('/my', auth, async (req, res) => {
+  try {
+    const donor = await Donor.findOne({ user: req.user.id });
+    if (!donor) return res.status(404).json({ message: 'Donor profile not found' });
+
+    const certificates = await DonorCertificate.find({ donor: donor._id }).sort({ createdAt: -1 });
+    res.json({ certificates });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
 // ─── GET /api/donor-certificates/:id/download ────────────────────────────────
 // Streams a PDF certificate with an embedded QR code linking to the public
 // verification endpoint below.

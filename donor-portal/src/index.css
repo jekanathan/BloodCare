@@ -832,6 +832,10 @@ body {
 .status-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 .status-approved::before { background: var(--green-500); }
 .status-approved { background: var(--green-100); color: #15803D; }
+.status-rejected::before { background: var(--red-500); }
+.status-rejected { background: var(--red-100); color: var(--red-700); }
+.status-pending::before { background: var(--amber-500); }
+.status-pending { background: var(--amber-100); color: #92400E; }
 .status-pending::before  { background: var(--amber-500); }
 .status-pending  { background: var(--amber-100); color: #92400E; }
 .status-eligible { background: var(--green-100); color: #15803D; }
@@ -926,3 +930,25 @@ body {
   .main-content{margin-left:0}
   .mobile-menu-btn{display:flex !important}
 }
+
+/* ── New-dashboard-mockup extras ──────────────────────────────────────── */
+.sidebar-footer-card{margin:14px 12px 16px;padding:18px 14px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:var(--r-md);text-align:center}
+.sidebar-footer-card-title{font-size:13px;font-weight:700;color:#fff;margin:8px 0 4px}
+.sidebar-footer-card-sub{font-size:11px;color:rgba(255,255,255,.6);line-height:1.4}
+
+.quick-action-tile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:16px 10px;border:1.5px solid var(--slate-200);border-radius:var(--r-md);background:var(--white);cursor:pointer;transition:all .15s;text-align:center}
+.quick-action-tile:hover{border-color:var(--red-300);box-shadow:var(--shadow-md);transform:translateY(-2px)}
+.quick-action-icon{width:42px;height:42px;border-radius:var(--r-sm);display:flex;align-items:center;justify-content:center}
+.quick-action-label{font-size:12px;font-weight:600;color:var(--slate-700)}
+
+.simple-table{width:100%;border-collapse:collapse}
+.simple-table th{text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--slate-400);padding:10px 16px;border-bottom:1px solid var(--slate-200)}
+.simple-table td{padding:13px 16px;font-size:13.5px;color:var(--slate-700);border-bottom:1px solid var(--slate-100)}
+.simple-table tr:last-child td{border-bottom:none}
+.simple-table tr:hover td{background:var(--slate-50)}
+
+.bank-list-row{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--slate-100)}
+.bank-list-row:last-child{border-bottom:none}
+.bank-pin{width:34px;height:34px;border-radius:50%;background:var(--red-100);color:var(--red-600);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+
+.pts-badge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:100px}
