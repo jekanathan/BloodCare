@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -20,6 +20,30 @@ const createIcon = (emoji, color, size=36) => L.divIcon({
 const HOSPITAL_ICON = createIcon('🏥','#2563EB',36);
 const createDonorIcon = (color) => createIcon('👤', color, 32);
 
+// Same district centroids as the backend (server/routes/emergencyRequests.js)
+// — used to move the map pin the instant a hospital is picked, before the
+// donor/blood-bank search round-trip even completes.
+const DISTRICT_COORDS = {
+  Colombo:[6.9271,79.8612], Gampaha:[7.0917,79.9999], Kalutara:[6.5854,79.9607],
+  Kandy:[7.2906,80.6337], Matale:[7.4675,80.6234], 'Nuwara Eliya':[6.9497,80.7891],
+  Galle:[6.0535,80.2210], Matara:[5.9485,80.5353], Hambantota:[6.1241,81.1185],
+  Jaffna:[9.6615,80.0255], Kilinochchi:[9.3961,80.3982], Mannar:[8.9810,79.9044],
+  Vavuniya:[8.7514,80.4971], Mullaitivu:[9.2671,80.8142],
+  Batticaloa:[7.7170,81.6924], Ampara:[7.2975,81.6747], Trincomalee:[8.5874,81.2152],
+  Kurunegala:[7.4818,80.3609], Puttalam:[8.0362,79.8283],
+  Anuradhapura:[8.3114,80.4037], Polonnaruwa:[7.9403,81.0188],
+  Badulla:[6.9934,81.0550], Monaragala:[6.8714,81.3507],
+  Ratnapura:[6.6828,80.3992], Kegalle:[7.2513,80.3464],
+};
+
+// react-leaflet's MapContainer only honors `center` on first mount — this
+// keeps the view synced whenever the resolved hospital location changes.
+function RecenterMap({ center }) {
+  const map = useMap();
+  useEffect(() => { map.setView(center, map.getZoom()); }, [center, map]);
+  return null;
+}
+
 // ─── Mock donors (used until real DB donors are available) ────────────────
 const BLOOD_GROUPS = ['A+','A-','B+','B-','AB+','AB-','O+','O-'];
 const API_BASE = 'http://localhost:5000/api';
@@ -36,7 +60,8 @@ export default function EmergencyPage() {
   const [donors, setDonors]               = useState([]);
   const [sentRequests, setSentRequests]   = useState({});
   const [confirmed, setConfirmed]         = useState(null);
-  const [mapCenter]                       = useState([6.9218, 79.8654]);
+  const [mapCenter, setMapCenter]         = useState([6.9271, 79.8612]); // Colombo, until a hospital resolves
+  const [hospitalCoords, setHospitalCoords] = useState([6.9271, 79.8612]);
   const [isDark, setIsDark]               = useState(document.body.classList.contains('dark-mode'));
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [selectedDonor, setSelectedDonor]       = useState(null);
@@ -67,6 +92,13 @@ export default function EmergencyPage() {
       .catch(err => console.error('Fetch hospitals error:', err));
   }, []);
 
+  useEffect(() => {
+    const selected = hospitals.find(h => h.name === hospital);
+    const coords = (selected?.district && DISTRICT_COORDS[selected.district]) || DISTRICT_COORDS['Colombo'];
+    setHospitalCoords(coords);
+    setMapCenter(coords);
+  }, [hospital, hospitals]);
+
   const showNotif = (msg, type='success') => {
     setNotification({ msg, type });
     setTimeout(() => setNotification(null), 3500);
@@ -89,13 +121,20 @@ export default function EmergencyPage() {
     setDonors([]);
     setBloodBanks([]);
 
+    const hospitalId = hospitals.find(h => h.name === hospital)?._id || '';
+
     if (searchMode === 'bloodbanks') {
       // ── Search approved blood banks with matching stock ───────────────────
       let banks = [];
       try {
-        const searchRes = await fetch(`${API_BASE}/emergency-requests/search-bloodbanks?bloodGroup=${bloodGroup}&radius=${radius}`);
+        const searchRes = await fetch(`${API_BASE}/emergency-requests/search-bloodbanks?bloodGroup=${encodeURIComponent(bloodGroup)}&radius=${radius}&hospitalId=${hospitalId}`);
         const searchData = await searchRes.json();
         banks = searchData.bloodBanks || [];
+        if (searchData.hospitalCoords) {
+          const c = [searchData.hospitalCoords.lat, searchData.hospitalCoords.lng];
+          setHospitalCoords(c);
+          setMapCenter(c);
+        }
       } catch (err) {
         console.error('Blood bank search error:', err);
         setApiError('Could not search blood banks. Please check your connection.');
@@ -125,9 +164,14 @@ export default function EmergencyPage() {
     // ── Step 1: Search real approved donors matching blood group + radius ──
     let filtered = [];
     try {
-      const searchRes = await fetch(`${API_BASE}/emergency-requests/search-donors?bloodGroup=${bloodGroup}&radius=${radius}`);
+      const searchRes = await fetch(`${API_BASE}/emergency-requests/search-donors?bloodGroup=${encodeURIComponent(bloodGroup)}&radius=${radius}&hospitalId=${hospitalId}`);
       const searchData = await searchRes.json();
       filtered = searchData.donors || [];
+      if (searchData.hospitalCoords) {
+        const c = [searchData.hospitalCoords.lat, searchData.hospitalCoords.lng];
+        setHospitalCoords(c);
+        setMapCenter(c);
+      }
     } catch (err) {
       console.error('Donor search error:', err);
       setApiError('Could not search donors. Please check your connection.');
@@ -601,6 +645,9 @@ export default function EmergencyPage() {
                           <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:2}}>
                             <span style={{fontSize:13,fontWeight:700,color:t.text}}>{donor.name}</span>
                             <span style={{fontSize:11,fontWeight:700,padding:'1px 6px',borderRadius:100,background:'rgba(196,30,58,.1)',color:'#C41E3A'}}>{donor.blood}</span>
+                            {donor.verified
+                              ? <span style={{fontSize:10,fontWeight:700,padding:'1px 6px',borderRadius:100,background:'rgba(34,197,94,.12)',color:'#16A34A'}}>✓ Verified</span>
+                              : <span style={{fontSize:10,fontWeight:700,padding:'1px 6px',borderRadius:100,background:'rgba(245,158,11,.12)',color:'#D97706'}}>Unverified</span>}
                           </div>
                           <div style={{display:'flex',gap:10,fontSize:11,color:t.text2}}>
                             <span>📍 {donor.distance} km away</span>
@@ -707,7 +754,8 @@ export default function EmergencyPage() {
                     :'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'}
                   attribution='&copy; OpenStreetMap'
                 />
-                <Marker position={[6.9218,79.8654]} icon={HOSPITAL_ICON}>
+                <RecenterMap center={mapCenter} />
+                <Marker position={hospitalCoords} icon={HOSPITAL_ICON}>
                   <Popup>
                     <div style={{fontFamily:"'Inter',sans-serif"}}>
                       <div style={{fontWeight:700,color:'#0F172A'}}>{hospital}</div>
@@ -718,7 +766,7 @@ export default function EmergencyPage() {
                 </Marker>
 
                 {step>=2&&(
-                  <Circle center={[6.9218,79.8654]} radius={radius*1000}
+                  <Circle center={hospitalCoords} radius={radius*1000}
                     pathOptions={{color:'#C41E3A',fillColor:'#C41E3A',fillOpacity:0.06,weight:2,dashArray:'8,6'}}/>
                 )}
 

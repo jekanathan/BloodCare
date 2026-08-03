@@ -273,8 +273,11 @@ function distanceKm(lat1, lng1, lat2, lng2) {
 router.get('/hospitals', async (req, res) => {
   try {
     const Hospital = require('../models/Hospital');
-    const hospitals = await Hospital.find({ status: 'approved' }).select('hospitalName');
-    res.json({ success: true, hospitals: hospitals.map(h => ({ _id: h._id, name: h.hospitalName })) });
+    const hospitals = await Hospital.find({ status: 'approved' }).select('hospitalName district');
+    res.json({
+      success: true,
+      hospitals: hospitals.map(h => ({ _id: h._id, name: h.hospitalName, district: h.district || null })),
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Server error', error: err.message });
   }
@@ -282,18 +285,30 @@ router.get('/hospitals', async (req, res) => {
 
 // ─── GET /api/emergency-requests/search-donors ──────────────────────────────
 // Real approved donors matching the requested blood group, with distance
-// from the hospital (Colombo coordinates as the default hospital location,
-// since hospitals don't yet store exact lat/lng).
+// from the selected hospital's district (hospitals don't store exact
+// lat/lng yet, so we use the district centroid as the reference point).
 router.get('/search-donors', async (req, res) => {
   try {
     const Donor = require('../models/Donor');
-    const { bloodGroup, radius } = req.query;
+    const Hospital = require('../models/Hospital');
+    const { bloodGroup, radius, hospitalId } = req.query;
     if (!bloodGroup) return res.status(400).json({ success: false, message: 'bloodGroup is required' });
 
-    const hospitalLat = 6.9218, hospitalLng = 79.8654; // National Hospital Colombo, as the reference point
+    let hospitalCoords = DISTRICT_COORDS['Colombo']; // fallback only if no hospital resolved
+    if (hospitalId) {
+      const hosp = await Hospital.findById(hospitalId).select('district');
+      if (hosp?.district && DISTRICT_COORDS[hosp.district]) {
+        hospitalCoords = DISTRICT_COORDS[hosp.district];
+      }
+    }
+    const [hospitalLat, hospitalLng] = hospitalCoords;
 
-    const donors = await Donor.find({ status: 'approved', bloodGroup, testingStatus: 'active' })
-      .select('fullName phone district lastDonationDate bloodGroup');
+    // Show every registered donor matching the blood group within range —
+    // not just fully test-verified ones. (Note: this means unverified
+    // donors can be contacted for emergencies too; tighten back to
+    // { status: 'approved', testingStatus: 'active' } if that's not desired.)
+    const donors = await Donor.find({ bloodGroup })
+      .select('fullName phone district lastDonationDate bloodGroup status testingStatus');
 
     const withDistance = donors
       .map(d => {
@@ -308,12 +323,13 @@ router.get('/search-donors', async (req, res) => {
           id: d._id, name: d.fullName, blood: d.bloodGroup, phone: d.phone,
           lat, lng, distance,
           lastDonation: d.lastDonationDate ? new Date(d.lastDonationDate).toISOString().split('T')[0] : null,
+          verified: d.status === 'approved' && d.testingStatus === 'active',
         };
       })
       .filter(d => !radius || d.distance <= parseFloat(radius))
       .sort((a, b) => a.distance - b.distance);
 
-    res.json({ success: true, donors: withDistance });
+    res.json({ success: true, donors: withDistance, hospitalCoords: { lat: hospitalLat, lng: hospitalLng } });
   } catch (err) {
     console.error('Search donors error:', err);
     res.status(500).json({ success: false, message: 'Server error', error: err.message });
@@ -328,10 +344,18 @@ router.get('/search-bloodbanks', async (req, res) => {
   try {
     const BloodBank = require('../models/BloodBank');
     const Inventory = require('../models/Inventory');
-    const { bloodGroup, radius } = req.query;
+    const Hospital = require('../models/Hospital');
+    const { bloodGroup, radius, hospitalId } = req.query;
     if (!bloodGroup) return res.status(400).json({ success: false, message: 'bloodGroup is required' });
 
-    const hospitalLat = 6.9218, hospitalLng = 79.8654; // National Hospital Colombo, reference point
+    let hospitalCoords = DISTRICT_COORDS['Colombo'];
+    if (hospitalId) {
+      const hosp = await Hospital.findById(hospitalId).select('district');
+      if (hosp?.district && DISTRICT_COORDS[hosp.district]) {
+        hospitalCoords = DISTRICT_COORDS[hosp.district];
+      }
+    }
+    const [hospitalLat, hospitalLng] = hospitalCoords;
 
     // Sum available units per blood bank for this blood group
     const stockByBank = await Inventory.aggregate([
@@ -369,7 +393,7 @@ router.get('/search-bloodbanks', async (req, res) => {
       .filter(b => !radius || b.distance <= parseFloat(radius))
       .sort((a, b) => a.distance - b.distance);
 
-    res.json({ success: true, bloodBanks: withDistance });
+    res.json({ success: true, bloodBanks: withDistance, hospitalCoords: { lat: hospitalLat, lng: hospitalLng } });
   } catch (err) {
     console.error('Search blood banks error:', err);
     res.status(500).json({ success: false, message: 'Server error', error: err.message });
