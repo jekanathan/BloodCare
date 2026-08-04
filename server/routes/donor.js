@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const Donor = require('../models/Donor');
 const Settings = require('../models/Settings');
@@ -418,7 +419,13 @@ router.get('/notifications-feed', auth, async (req, res) => {
     const donor = await Donor.findOne({ user: req.user.id });
     if (!donor) return res.status(404).json({ message: 'Donor profile not found' });
 
-    const [announcements, requests, appointments, campaigns] = await Promise.all([
+    // EmergencyRequest is registered by routes/emergencyRequests.js at server
+    // startup (before any request can reach here) — grab it lazily by name
+    // instead of redefining the schema here.
+    const EmergencyRequest = mongoose.model('EmergencyRequest');
+    const donorIdStr = donor._id.toString();
+
+    const [announcements, requests, appointments, campaigns, emergencyReqs] = await Promise.all([
       Notification.find({
         status: 'sent',
         recipientGroup: {
@@ -442,6 +449,11 @@ router.get('/notifications-feed', auth, async (req, res) => {
           { district: donor.district },
         ],
       }).sort({ startDate: 1 }).limit(10),
+
+      // Emergency requests the admin specifically sent to this donor
+      // (Admin → Emergency Management → Search Donors → Send Requests).
+      EmergencyRequest.find({ 'donorRequests.donorId': donorIdStr })
+        .sort({ createdAt: -1 }).limit(10),
     ]);
 
     const items = [
@@ -467,6 +479,30 @@ router.get('/notifications-feed', auth, async (req, res) => {
         time: r.createdAt,
         unread: false, // derived, not a persisted-read item
       })),
+      ...emergencyReqs.map(r => {
+        const myEntry = r.donorRequests.find(d => d.donorId === donorIdStr);
+        const isConfirmed = r.confirmedDonor?.donorId === donorIdStr;
+        const wasStoodDown = myEntry?.status === 'cancelled' && !isConfirmed;
+        return {
+          _id: `${r._id}-${donorIdStr}`, // composite: not a persisted-read row, but keep it unique across donors
+          source: 'emergency',
+          type: 'emergency',
+          category: 'requests',
+          icon: '🚨',
+          title: isConfirmed
+            ? 'You were confirmed as donor!'
+            : wasStoodDown
+              ? 'Emergency Request Filled'
+              : 'Emergency Blood Request',
+          desc: isConfirmed
+            ? `Thank you! You've been confirmed to donate ${r.bloodGroup} blood for ${r.hospital}.`
+            : wasStoodDown
+              ? `${r.hospital}'s urgent need for ${r.bloodGroup} blood was filled by another donor. Thanks for being ready to help.`
+              : `${r.hospital} urgently needs ${r.bloodGroup} blood. ${r.units} unit${r.units !== 1 ? 's' : ''} required — please respond if you can help.`,
+          time: myEntry?.sentAt || r.createdAt,
+          unread: false,
+        };
+      }),
       ...appointments.map(a => ({
         _id: a._id,
         source: 'appointment',
